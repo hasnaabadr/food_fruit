@@ -1,0 +1,5 @@
+app.jpg: Apple
+Avo.jpg: Avocado
+ban.jpg: Banana
+ber.jpg: Berry
+bur.jpg: Burmese Grape
