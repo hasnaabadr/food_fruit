@@ -6,37 +6,45 @@ from pathlib import Path
 import random
 import pickle
 import os
+import torch.nn.functional as F
+import torch.nn as nn
 
-#(Part B Case 1)
 # ==========================
-# Transform
+# Transform (same as validation)
 # ==========================
 transform = transforms.Compose([
-    transforms.Resize((192, 256)),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485,0.456,0.406],
                          std=[0.229,0.224,0.225])
 ])
 
 # ==========================
-# Siamese Backbone (ResNet18)
+# Siamese Network (same as training)
 # ==========================
-class SiameseNetwork(torch.nn.Module):
+class SiameseNetwork(nn.Module):
     def __init__(self, embedding_dim=128, pretrained=True):
         super().__init__()
-        backbone = models.resnet18(weights=models.ResNet18_Weights.DEFAULT if pretrained else None)
+        backbone = models.resnet18(
+            weights=models.ResNet18_Weights.DEFAULT if pretrained else None
+        )
         num_ftrs = backbone.fc.in_features
-        backbone.fc = torch.nn.Linear(num_ftrs, embedding_dim)
+        backbone.fc = nn.Linear(num_ftrs, embedding_dim)
         self.backbone = backbone
 
-    def forward(self, x):
-        return self.backbone(x)
+    def forward_once(self, x):
+        x = self.backbone(x)
+        return F.normalize(x, p=2, dim=1)
+
+    def forward(self, x1, x2):
+        return self.forward_once(x1), self.forward_once(x2)
 
 # ==========================
-# Compute embeddings for one random image per class
+# Compute mean embedding per class (Case 1)
 # ==========================
 def compute_train_embeddings(train_dir, model, device, cache_file="train_embeddings.pkl"):
     train_dir = Path(train_dir)
+
     if os.path.exists(cache_file):
         with open(cache_file, "rb") as f:
             embeddings, labels = pickle.load(f)
@@ -47,24 +55,26 @@ def compute_train_embeddings(train_dir, model, device, cache_file="train_embeddi
     labels = []
 
     for class_dir in train_dir.iterdir():
-        if class_dir.is_dir():
-            images = list(class_dir.glob("*.jpg"))
-            if not images:
-                continue
+        if not class_dir.is_dir():
+            continue
 
-            selected_imgs = random.sample(images, min(5, len(images)))
-            embs = []
+        images = list(class_dir.glob("*.jpg"))
+        if len(images) == 0:
+            continue
 
-            for img_path in selected_imgs:
-                img = Image.open(img_path).convert("RGB")
-                img = transform(img).unsqueeze(0).to(device)
-                with torch.no_grad():
-                    emb = model(img).cpu()
-                embs.append(emb)
+        selected_imgs = random.sample(images, min(5, len(images)))
+        embs = []
 
-            class_emb = torch.mean(torch.vstack(embs), dim=0, keepdim=True)
-            embeddings.append(class_emb)
-            labels.append(class_dir.name)
+        for img_path in selected_imgs:
+            img = Image.open(img_path).convert("RGB")
+            img = transform(img).unsqueeze(0).to(device)
+            with torch.no_grad():
+                emb = model.forward_once(img).cpu()
+            embs.append(emb)
+
+        class_emb = torch.mean(torch.vstack(embs), dim=0, keepdim=True)
+        embeddings.append(class_emb)
+        labels.append(class_dir.name)
 
     embeddings = torch.vstack(embeddings)
 
@@ -73,20 +83,22 @@ def compute_train_embeddings(train_dir, model, device, cache_file="train_embeddi
 
     return embeddings, labels
 
-
 # ==========================
-# Test Part B - Case 1
+# Part B - Case 1
 # ==========================
-def test_partB_case1(test_dir, train_dir=r"data\processed\phaseB\train\food",
-                     model_path="phaseB_model.pt", device=None, output_file="partB_case1_results.txt"):
+def test_partB_case1(
+    test_dir,
+    train_dir=r"data\processed\phaseB\train\food",
+    model_path="phaseB_model.pt",
+    device=None,
+    output_file="partB_case1_results.txt"
+):
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load model
     model = SiameseNetwork(embedding_dim=128).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
-    # Compute / load embeddings for training classes
     train_embeddings, train_labels = compute_train_embeddings(train_dir, model, device)
 
     test_dir = Path(test_dir)
@@ -95,90 +107,73 @@ def test_partB_case1(test_dir, train_dir=r"data\processed\phaseB\train\food",
     for img_file in test_dir.glob("*.jpg"):
         img = Image.open(img_file).convert("RGB")
         img_tensor = transform(img).unsqueeze(0).to(device)
+
         with torch.no_grad():
-            test_emb = model(img_tensor).cpu()
-        # compute distances
+            test_emb = model.forward_once(img_tensor).cpu()
+
         distances = torch.norm(train_embeddings - test_emb, dim=1)
         min_idx = torch.argmin(distances).item()
         predicted_class = train_labels[min_idx]
+
         results.append((img_file.name, predicted_class))
-    
-    # Save results to text file
+
     with open(output_file, "w") as f:
         for img_name, pred_class in results:
             f.write(f"{img_name}: {pred_class}\n")
 
+    print(f"✓ Case 1 results saved to {output_file}")
     return results
 
-
-
 # ==========================
-# Part B - Case 2 Test
+# Part B - Case 2
 # ==========================
-import torch
-from PIL import Image
-from pathlib import Path
-from torchvision import transforms
-import torch.nn.functional as F
-
 def test_partB_case2(anchor_folder, model_path="phaseB_model.pt", device=None):
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Load model
     model = SiameseNetwork(embedding_dim=128).to(device)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
 
     anchor_folder = Path(anchor_folder)
     anchor_path = anchor_folder / "Anchor.jpg"
+
     if not anchor_path.exists():
         print("Anchor image not found!")
         return
 
-    # Transform
-    transform = transforms.Compose([
-        transforms.Resize((192, 256)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                             std=[0.229, 0.224, 0.225])
-    ])
-
-    # Load Anchor
     anchor_img = Image.open(anchor_path).convert("RGB")
     anchor_tensor = transform(anchor_img).unsqueeze(0).to(device)
 
-    # Load all other images
+    with torch.no_grad():
+        anchor_emb = model.forward_once(anchor_tensor)
+
     other_images = [f for f in anchor_folder.glob("*.jpg") if f.name != "Anchor.jpg"]
     if len(other_images) == 0:
-        print("No other images found for comparison!")
+        print("No other images found!")
         return
-
-    # Calculate embeddings for anchor
-    with torch.no_grad():
-        anchor_emb = model.backbone(anchor_tensor)
 
     results = {}
     for img_path in other_images:
         img = Image.open(img_path).convert("RGB")
         img_tensor = transform(img).unsqueeze(0).to(device)
+
         with torch.no_grad():
-            img_emb = model.backbone(img_tensor)
-        # Euclidean distance
+            img_emb = model.forward_once(img_tensor)
+
         dist = F.pairwise_distance(anchor_emb, img_emb)
         results[img_path.name] = dist.item()
 
-    # Find closest image
     closest_img = min(results, key=results.get)
+
     print(f"Anchor image: {anchor_path.name}")
     print(f"Most similar image: {closest_img} (distance={results[closest_img]:.4f})")
 
-    # Save results to text file
     output_file = anchor_folder / "partB_case2_results.txt"
     with open(output_file, "w") as f:
         f.write(f"Anchor image: {anchor_path.name}\n")
         f.write(f"Most similar image: {closest_img} (distance={results[closest_img]:.4f})\n")
 
-    print(f"✓ Results saved in {output_file}")
+    print(f"✓ Case 2 results saved to {output_file}")
     return results
 
 # ==========================
@@ -198,7 +193,7 @@ from torchvision import transforms
 class FruitClassifier(torch.nn.Module):
     def __init__(self, num_classes):
         super().__init__()
-        backbone = models.resnet18(weights=None)
+        backbone = models.resnet18(pretrained=True)
         num_ftrs = backbone.fc.in_features
         backbone.fc = torch.nn.Linear(num_ftrs, num_classes)
         self.backbone = backbone

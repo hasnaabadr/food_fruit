@@ -5,6 +5,8 @@ from all_tests import (test_partB_case1, test_partB_case2 ,  test_partC
 #    test_partA,
 #    test_partD, test_partE, integrated_test
 )
+from part5test import test_random_images  
+
 
 # ==========================
 # Main GUI
