@@ -101,23 +101,35 @@ def preprocess_phase_a():
                 except: pass
     print(f"Fruit Val: {count} images processed")
 
+
 # ==========================
-# Fill Phase B/C from Phase A
+# Fill Phase B/C from Phase A 
 # ==========================
 def fill_phase_b_c():
-    # Phase B: copy food
+    # --------- Phase B: organize by class ---------
     for split in ["train","val"]:
         src = PROCESSED_DATA_DIR / f"phaseA/{split}/food"
-        dest = PROCESSED_DATA_DIR / f"phaseB/{split}/food"
+        dest_root = PROCESSED_DATA_DIR / f"phaseB/{split}/food"
+        dest_root.mkdir(parents=True, exist_ok=True)
+
         for img_file in src.glob("*.jpg"):
-            shutil.copy(img_file, dest / img_file.name)
-    # Phase C: copy fruit
+ 
+            class_name = img_file.stem.split("_")[0]
+            dest_class_dir = dest_root / class_name
+            dest_class_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(img_file, dest_class_dir / img_file.name)
+
+    # --------- Phase C: copy flat without changing logic ---------
     for split in ["train","val"]:
         src = PROCESSED_DATA_DIR / f"phaseA/{split}/fruit"
-        dest = PROCESSED_DATA_DIR / f"phaseC/{split}/fruit"
+        dest_root = PROCESSED_DATA_DIR / f"phaseC/{split}/fruit"
+        dest_root.mkdir(parents=True, exist_ok=True)
+
         for img_file in src.glob("*.jpg"):
-            shutil.copy(img_file, dest / img_file.name)
-    print("✓ Phase B and C folders filled from Phase A")
+            shutil.copy(img_file, dest_root / img_file.name)
+
+    print("✓ Phase B organized by class, Phase C kept flat")
+
 
 # ==========================
 # Phase DE preprocessing (Segmentation)

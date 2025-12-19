@@ -1,4 +1,4 @@
-# phaseB_full.py
+
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
@@ -6,16 +6,23 @@ from torchvision import transforms, models
 from PIL import Image
 from pathlib import Path
 import random
+import torch.nn.functional as F
 
 # ==========================
-# Dataset Phase B (Flat folder)
+# Dataset Phase B (Folder per class)
 # ==========================
-class PhaseBFoodDatasetFlat(Dataset):
-    """Siamese Dataset for Phase B (Flat folder, no class subfolders)"""
+class PhaseBFoodDatasetByClass(Dataset):
+    """Siamese Dataset for Phase B (Folder per class)"""
     def __init__(self, folder_path, transform=None):
         self.folder_path = Path(folder_path)
         self.transform = transform
-        self.data = list(self.folder_path.glob("*.jpg"))
+        self.data = []  # list of tuples: (img_path, class_name)
+        
+        for class_dir in self.folder_path.iterdir():
+            if class_dir.is_dir():
+                for img_file in class_dir.glob("*.jpg"):
+                    self.data.append((img_file, class_dir.name))
+        
         if len(self.data) == 0:
             raise ValueError(f"No images found in {folder_path}")
 
@@ -23,14 +30,18 @@ class PhaseBFoodDatasetFlat(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        img_path1 = self.data[idx]
+        img_path1, class1 = self.data[idx]
 
-        # Positive or Negative pair randomly (dummy)
+        # Positive or Negative pair randomly
         if random.random() < 0.5:
-            img_path2 = random.choice(self.data)  # positive
+            # Positive: same class
+            same_class_imgs = [p for p, c in self.data if c == class1]
+            img_path2 = random.choice(same_class_imgs)
             label = 1
         else:
-            img_path2 = random.choice(self.data)  # negative
+            # Negative: different class
+            diff_class_imgs = [p for p, c in self.data if c != class1]
+            img_path2 = random.choice(diff_class_imgs)
             label = 0
 
         img1 = Image.open(img_path1).convert("RGB")
@@ -54,6 +65,7 @@ transform = transforms.Compose([
     transforms.Normalize(mean=[0.485, 0.456, 0.406],
                          std=[0.229, 0.224, 0.225])
 ])
+
 # ==========================
 # Siamese Network
 # ==========================
@@ -79,12 +91,20 @@ class ContrastiveLoss(nn.Module):
         self.margin = margin
 
     def forward(self, out1, out2, label):
-        # Euclidean distance
-        dist = torch.nn.functional.pairwise_distance(out1, out2)
+        dist = F.pairwise_distance(out1, out2)
         loss_pos = label * dist.pow(2)
         loss_neg = (1 - label) * torch.clamp(self.margin - dist, min=0).pow(2)
         loss = torch.mean(loss_pos + loss_neg)
         return loss
+
+# ==========================
+# Helper: compute accuracy
+# ==========================
+def compute_accuracy(out1, out2, label, threshold=0.5):
+    dist = F.pairwise_distance(out1, out2)
+    pred = (dist < threshold).float()
+    correct = (pred == label).sum().item()
+    return correct / len(label)
 
 # ==========================
 # Main Training Script
@@ -97,8 +117,8 @@ if __name__ == "__main__":
     val_path = "data/processed/phaseB/val/food"
 
     # Datasets
-    train_dataset = PhaseBFoodDatasetFlat(train_path, transform=transform)
-    val_dataset = PhaseBFoodDatasetFlat(val_path, transform=transform)
+    train_dataset = PhaseBFoodDatasetByClass(train_path, transform=transform)
+    val_dataset = PhaseBFoodDatasetByClass(val_path, transform=transform)
 
     # DataLoaders
     train_loader = DataLoader(train_dataset, batch_size=16, shuffle=True)
@@ -127,15 +147,20 @@ if __name__ == "__main__":
         # ======== Validation ========
         model.eval()
         val_loss = 0
+        total_acc = 0
         with torch.no_grad():
             for (img1, img2), labels in val_loader:
                 img1, img2, labels = img1.to(device), img2.to(device), labels.to(device)
                 out1, out2 = model(img1, img2)
                 loss = criterion(out1, out2, labels)
                 val_loss += loss.item()
+                total_acc += compute_accuracy(out1, out2, labels) * len(labels)
         val_loss /= len(val_loader)
+        val_acc = total_acc / len(val_dataset)
 
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f}")
-#----model saving----#
-torch.save(model.state_dict(), "phaseB_model.pt")
-print("✓ Model saved as phaseB_model.pt")
+        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {train_loss:.4f} - Val Loss: {val_loss:.4f} - Val Acc: {val_acc:.4f}")
+
+    # ----model saving----#
+    torch.save(model.state_dict(), "phaseB_model.pt")
+    print("✓ Model saved as phaseB_model.pt")
+     

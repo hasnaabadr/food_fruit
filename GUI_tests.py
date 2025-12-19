@@ -38,16 +38,11 @@ def run_test_b1():
 def run_test_b2():
     anchor_dir = filedialog.askdirectory(title="Select folder containing Anchor and other images for Part B - Case 2")
     if anchor_dir:
-        results = test_partB_case2(anchor_dir)
-        # Save results to a text file
-        with open("partB_case2_results.txt", "w") as f:
-            for img_name, pred_class in results.items():
-                f.write(f"{img_name}: {pred_class}\n")
+        results = test_partB_case2(anchor_dir)  
         messagebox.showinfo(
             "Result Part B Case 2",
             f"Results saved to partB_case2_results.txt\nMost similar image: {min(results, key=results.get)}"
         )
-
 
 def run_test_c():
     test_dir = filedialog.askdirectory(title="Select test images folder for Part C")

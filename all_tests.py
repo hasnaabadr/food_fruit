@@ -45,28 +45,39 @@ def compute_train_embeddings(train_dir, model, device, cache_file="train_embeddi
     model.eval()
     embeddings = []
     labels = []
+
     for class_dir in train_dir.iterdir():
         if class_dir.is_dir():
             images = list(class_dir.glob("*.jpg"))
             if not images:
                 continue
-            img_path = random.choice(images)  # random image
-            img = Image.open(img_path).convert("RGB")
-            img = transform(img).unsqueeze(0).to(device)
-            with torch.no_grad():
-                emb = model(img).cpu()
-            embeddings.append(emb)
+
+            selected_imgs = random.sample(images, min(5, len(images)))
+            embs = []
+
+            for img_path in selected_imgs:
+                img = Image.open(img_path).convert("RGB")
+                img = transform(img).unsqueeze(0).to(device)
+                with torch.no_grad():
+                    emb = model(img).cpu()
+                embs.append(emb)
+
+            class_emb = torch.mean(torch.vstack(embs), dim=0, keepdim=True)
+            embeddings.append(class_emb)
             labels.append(class_dir.name)
+
     embeddings = torch.vstack(embeddings)
-    # Save cache
+
     with open(cache_file, "wb") as f:
         pickle.dump((embeddings, labels), f)
+
     return embeddings, labels
+
 
 # ==========================
 # Test Part B - Case 1
 # ==========================
-def test_partB_case1(test_dir, train_dir="Project Data/Food/Train",
+def test_partB_case1(test_dir, train_dir=r"data\processed\phaseB\train\food",
                      model_path="phaseB_model.pt", device=None, output_file="partB_case1_results.txt"):
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -110,12 +121,14 @@ from pathlib import Path
 from torchvision import transforms
 import torch.nn.functional as F
 
-def test_partB_case2(model, device, anchor_folder):
-    """
-    anchor_folder: path to folder containing:
-        - 1 Anchor image (named 'Anchor.jpg' مثلاً)
-        - Other images for comparison
-    """
+def test_partB_case2(anchor_folder, model_path="phaseB_model.pt", device=None):
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    # Load model
+    model = SiameseNetwork(embedding_dim=128).to(device)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+
     anchor_folder = Path(anchor_folder)
     anchor_path = anchor_folder / "Anchor.jpg"
     if not anchor_path.exists():
@@ -141,7 +154,6 @@ def test_partB_case2(model, device, anchor_folder):
         return
 
     # Calculate embeddings for anchor
-    model.eval()
     with torch.no_grad():
         anchor_emb = model.backbone(anchor_tensor)
 
@@ -168,7 +180,6 @@ def test_partB_case2(model, device, anchor_folder):
 
     print(f"✓ Results saved in {output_file}")
     return results
-
 
 # ==========================
 # Test Part C - Fruit Classification
